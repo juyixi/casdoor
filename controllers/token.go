@@ -287,11 +287,10 @@ func (c *ApiController) GetOAuthToken() {
 	// Handle private_key_jwt client authentication (RFC 7523)
 	if clientAssertion != "" && clientAssertionType != "" {
 		// Verify client_assertion_type
-		expectedType := "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-		if clientAssertionType != expectedType {
+		if err := validateClientAssertionTypeForController(clientAssertionType); err != nil {
 			c.Data["json"] = &object.TokenError{
 				Error:            object.InvalidClient,
-				ErrorDescription: fmt.Sprintf("invalid client_assertion_type: expected %s", expectedType),
+				ErrorDescription: err.Error(),
 			}
 			c.SetTokenErrorHttpStatus()
 			c.ServeJSON()
@@ -299,11 +298,7 @@ func (c *ApiController) GetOAuthToken() {
 		}
 
 		// Build the token endpoint URL for audience validation
-		scheme := "http"
-		if c.Ctx.Request.TLS != nil {
-			scheme = "https"
-		}
-		tokenEndpoint := fmt.Sprintf("%s://%s", scheme, host)
+		tokenEndpoint := c.buildTokenEndpointURL()
 
 		// Validate the JWT assertion
 		validatedClientId, err := object.ValidateClientAssertion(clientAssertion, tokenEndpoint)
@@ -374,11 +369,10 @@ func (c *ApiController) RefreshToken() {
 	// Handle private_key_jwt client authentication (RFC 7523)
 	if clientAssertion != "" && clientAssertionType != "" {
 		// Verify client_assertion_type
-		expectedType := "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-		if clientAssertionType != expectedType {
+		if err := validateClientAssertionTypeForController(clientAssertionType); err != nil {
 			c.Data["json"] = &object.TokenError{
 				Error:            object.InvalidClient,
-				ErrorDescription: fmt.Sprintf("invalid client_assertion_type: expected %s", expectedType),
+				ErrorDescription: err.Error(),
 			}
 			c.SetTokenErrorHttpStatus()
 			c.ServeJSON()
@@ -386,11 +380,7 @@ func (c *ApiController) RefreshToken() {
 		}
 
 		// Build the token endpoint URL for audience validation
-		scheme := "http"
-		if c.Ctx.Request.TLS != nil {
-			scheme = "https"
-		}
-		tokenEndpoint := fmt.Sprintf("%s://%s", scheme, host)
+		tokenEndpoint := c.buildTokenEndpointURL()
 
 		// Validate the JWT assertion
 		validatedClientId, err := object.ValidateClientAssertion(clientAssertion, tokenEndpoint)
@@ -457,18 +447,13 @@ func (c *ApiController) IntrospectToken() {
 		// Check for private_key_jwt authentication
 		if clientAssertion != "" && clientAssertionType != "" {
 			// Verify client_assertion_type
-			expectedType := "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-			if clientAssertionType != expectedType {
+			if err := validateClientAssertionTypeForController(clientAssertionType); err != nil {
 				c.ResponseTokenError(object.InvalidClient)
 				return
 			}
 
 			// Build the token endpoint URL for audience validation
-			scheme := "http"
-			if c.Ctx.Request.TLS != nil {
-				scheme = "https"
-			}
-			tokenEndpoint := fmt.Sprintf("%s://%s", scheme, c.Ctx.Request.Host)
+			tokenEndpoint := c.buildTokenEndpointURL()
 
 			// Validate the JWT assertion
 			validatedClientId, err := object.ValidateClientAssertion(clientAssertion, tokenEndpoint)

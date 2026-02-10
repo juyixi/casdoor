@@ -220,18 +220,12 @@ func getUsernameByPrivateKeyJwt(ctx *context.Context) (string, error) {
 	}
 
 	// Verify client_assertion_type is the correct value per RFC 7523
-	expectedType := "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-	if clientAssertionType != expectedType {
-		return "", fmt.Errorf("invalid client_assertion_type: expected %s, got %s", expectedType, clientAssertionType)
+	if err := validateClientAssertionType(clientAssertionType); err != nil {
+		return "", err
 	}
 
 	// Build the token endpoint URL for audience validation
-	// Use the request's scheme and host
-	scheme := "http"
-	if ctx.Request.TLS != nil {
-		scheme = "https"
-	}
-	tokenEndpoint := fmt.Sprintf("%s://%s", scheme, ctx.Request.Host)
+	tokenEndpoint := buildTokenEndpointURL(ctx)
 
 	// Validate the JWT assertion
 	clientId, err := object.ValidateClientAssertion(clientAssertion, tokenEndpoint)
@@ -263,6 +257,26 @@ func getHostname(s string) string {
 
 	res := l.Hostname()
 	return res
+}
+
+// buildTokenEndpointURL constructs the token endpoint URL from the request
+// Used for private_key_jwt audience validation
+func buildTokenEndpointURL(ctx *context.Context) string {
+	scheme := "http"
+	if ctx.Request.TLS != nil {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s", scheme, ctx.Request.Host)
+}
+
+// validateClientAssertionType validates the client_assertion_type parameter
+// Returns an error if the type is not the expected RFC 7523 value
+func validateClientAssertionType(clientAssertionType string) error {
+	expectedType := "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+	if clientAssertionType != expectedType {
+		return fmt.Errorf("invalid client_assertion_type: expected %s, got %s", expectedType, clientAssertionType)
+	}
+	return nil
 }
 
 func removePort(s string) string {

@@ -297,29 +297,36 @@ func ValidateClientAssertion(clientAssertion string, tokenEndpoint string) (stri
 		return "", fmt.Errorf("missing 'aud' claim")
 	}
 
-	// Validate audience - accept either the full token endpoint or just the host
-	// This is flexible to support different client implementations
+	// RFC 7523: aud (audience) MUST contain the token endpoint or authorization server URL
+	// Validate audience strictly - only accept exact match or hostname match
 	validAudience := false
+	tokenHost := extractHostname(tokenEndpoint)
+	
 	for _, aud := range verifiedClaims.Audience {
+		// Exact match of the full URL
 		if aud == tokenEndpoint {
 			validAudience = true
 			break
-		} else if strings.Contains(tokenEndpoint, aud) {
-			validAudience = true
-			break
-		} else if strings.Contains(aud, "://") {
-			// If audience is a full URL, check if it matches the server host
+		}
+		
+		// If audience is a full URL, check if hostname matches
+		if strings.Contains(aud, "://") {
 			audienceHost := extractHostname(aud)
-			tokenHost := extractHostname(tokenEndpoint)
-			if audienceHost == tokenHost {
+			if audienceHost != "" && audienceHost == tokenHost {
 				validAudience = true
 				break
 			}
 		}
+		
+		// Allow just the hostname as audience
+		if aud == tokenHost {
+			validAudience = true
+			break
+		}
 	}
 
 	if !validAudience {
-		return "", fmt.Errorf("invalid 'aud' claim: expected %s or similar, got %v", tokenEndpoint, verifiedClaims.Audience)
+		return "", fmt.Errorf("invalid 'aud' claim: expected %s or hostname %s, got %v", tokenEndpoint, tokenHost, verifiedClaims.Audience)
 	}
 
 	// RFC 7523: exp (expiration) MUST be present and the assertion MUST NOT be expired
@@ -333,10 +340,13 @@ func ValidateClientAssertion(clientAssertion string, tokenEndpoint string) (stri
 	}
 
 	// RFC 7523: jti (JWT ID) SHOULD be present to prevent replay attacks
-	// We validate it's present but don't track usage for now (can be enhanced later)
+	// NOTE: This implementation validates the presence of JTI but does NOT track it.
+	// To prevent replay attacks in production, implement JTI tracking using a cache
+	// (e.g., Redis) that stores used JTIs until their expiration time.
+	// For now, we rely on short JWT expiration times (recommended: 5 minutes) to minimize risk.
 	if verifiedClaims.ID == "" {
-		// This is a SHOULD requirement, so we just warn but don't fail
-		// In production, you might want to track JTI to prevent replay
+		// This is a SHOULD requirement per RFC 7523, so we don't fail
+		// but strongly recommend clients include a unique JTI
 	}
 
 	// Optional: Validate iat (issued at) and nbf (not before)
