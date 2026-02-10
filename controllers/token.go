@@ -256,20 +256,21 @@ func (c *ApiController) GetOAuthToken() {
 		if err != nil {
 			c.Data["json"] = &object.TokenError{
 				Error:            object.InvalidClient,
-				ErrorDescription: fmt.Sprintf("client_assertion validation failed: %s", err.Error()),
+				ErrorDescription: "Invalid client authentication",
 			}
 			c.SetTokenErrorHttpStatus()
 			c.ServeJSON()
 			return
 		}
 
-		// Use validated client_id and clear client_secret (not needed for private_key_jwt)
+		// RFC 7521 section 4.2: client_id parameter is optional when using client_assertion
+		// If provided, it must match the assertion's subject
 		if clientId == "" {
 			clientId = validatedClientId
 		} else if clientId != validatedClientId {
 			c.Data["json"] = &object.TokenError{
 				Error:            object.InvalidClient,
-				ErrorDescription: "client_id in assertion does not match provided client_id",
+				ErrorDescription: "Invalid client authentication",
 			}
 			c.SetTokenErrorHttpStatus()
 			c.ServeJSON()

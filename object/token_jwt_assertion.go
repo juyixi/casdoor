@@ -15,8 +15,6 @@
 package object
 
 import (
-	"crypto/ecdsa"
-	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
@@ -136,7 +134,9 @@ func ValidateClientAssertion(clientAssertion string, clientAssertionType string,
 	}
 
 	// RFC 7523 Section 3: jti (JWT ID) SHOULD be present for replay protection
-	// We validate its presence but don't implement full replay detection here
+	// Note: Full replay protection requires storing used jti values in a cache/database
+	// until the JWT expires. This implementation validates presence but doesn't track usage.
+	// For production deployments, consider implementing jti tracking using Redis or similar.
 	if validatedClaims.ID == "" {
 		return "", fmt.Errorf("client assertion missing 'jti' claim (required for replay protection)")
 	}
@@ -160,12 +160,7 @@ func parsePublicKeyFromCert(cert *Cert) (interface{}, error) {
 	x509Cert, err := x509.ParseCertificate(block.Bytes)
 	if err == nil {
 		// Successfully parsed as certificate, return public key
-		switch pub := x509Cert.PublicKey.(type) {
-		case *rsa.PublicKey, *ecdsa.PublicKey:
-			return pub, nil
-		default:
-			return nil, fmt.Errorf("unsupported public key type in certificate")
-		}
+		return x509Cert.PublicKey, nil
 	}
 
 	// If not a certificate, try to parse as public key directly

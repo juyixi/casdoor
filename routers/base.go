@@ -142,17 +142,13 @@ func getUsernameByClientAssertion(ctx *context.Context) (string, error) {
 	}
 
 	// Build expected audience URL
-	expectedAudience := ctx.Request.Host + ctx.Request.URL.Path
-	if ctx.Request.TLS != nil {
-		expectedAudience = "https://" + expectedAudience
-	} else {
-		expectedAudience = "http://" + expectedAudience
-	}
+	expectedAudience := buildAudienceURL(ctx)
 
 	// Validate the client assertion
 	clientId, err := object.ValidateClientAssertion(clientAssertion, clientAssertionType, expectedAudience)
 	if err != nil {
-		return "", fmt.Errorf("client assertion validation failed: %w", err)
+		// Return generic error to avoid leaking system details
+		return "", fmt.Errorf("client assertion authentication failed")
 	}
 
 	// Get application to return the username
@@ -260,4 +256,13 @@ func removePort(s string) string {
 		ipStr = s
 	}
 	return ipStr
+}
+
+// buildAudienceURL constructs the expected audience URL for client assertions
+func buildAudienceURL(ctx *context.Context) string {
+	audience := ctx.Request.Host + ctx.Request.URL.Path
+	if ctx.Request.TLS != nil {
+		return "https://" + audience
+	}
+	return "http://" + audience
 }
