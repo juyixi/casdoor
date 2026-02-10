@@ -124,6 +124,45 @@ func getUsernameByClientIdSecret(ctx *context.Context) (string, error) {
 	return fmt.Sprintf("app/%s", application.Name), nil
 }
 
+// getUsernameByClientAssertion handles private_key_jwt client authentication (RFC 7523)
+func getUsernameByClientAssertion(ctx *context.Context) (string, error) {
+	clientAssertion := ctx.Input.Query("clientAssertion")
+	clientAssertionType := ctx.Input.Query("clientAssertionType")
+
+	// Also check for snake_case parameters as per OAuth 2.0 spec
+	if clientAssertion == "" {
+		clientAssertion = ctx.Input.Query("client_assertion")
+	}
+	if clientAssertionType == "" {
+		clientAssertionType = ctx.Input.Query("client_assertion_type")
+	}
+
+	if clientAssertion == "" || clientAssertionType == "" {
+		return "", nil
+	}
+
+	// Build expected audience URL
+	expectedAudience := buildAudienceURL(ctx)
+
+	// Validate the client assertion
+	clientId, err := object.ValidateClientAssertion(clientAssertion, clientAssertionType, expectedAudience)
+	if err != nil {
+		// Return generic error to avoid leaking system details
+		return "", fmt.Errorf("client assertion authentication failed")
+	}
+
+	// Get application to return the username
+	application, err := object.GetApplicationByClientId(clientId)
+	if err != nil {
+		return "", err
+	}
+	if application == nil {
+		return "", fmt.Errorf("Application not found for client ID: %s", clientId)
+	}
+
+	return fmt.Sprintf("app/%s", application.Name), nil
+}
+
 func getUsernameByKeys(ctx *context.Context) (string, error) {
 	accessKey, accessSecret := getKeys(ctx)
 	user, err := object.GetUserByAccessKey(accessKey)
@@ -217,4 +256,13 @@ func removePort(s string) string {
 		ipStr = s
 	}
 	return ipStr
+}
+
+// buildAudienceURL constructs the expected audience URL for client assertions
+func buildAudienceURL(ctx *context.Context) string {
+	audience := ctx.Request.Host + ctx.Request.URL.Path
+	if ctx.Request.TLS != nil {
+		return "https://" + audience
+	}
+	return "http://" + audience
 }

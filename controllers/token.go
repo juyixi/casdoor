@@ -162,6 +162,8 @@ func (c *ApiController) DeleteToken() {
 func (c *ApiController) GetOAuthToken() {
 	clientId := c.Ctx.Input.Query("client_id")
 	clientSecret := c.Ctx.Input.Query("client_secret")
+	clientAssertion := c.Ctx.Input.Query("client_assertion")
+	clientAssertionType := c.Ctx.Input.Query("client_assertion_type")
 	grantType := c.Ctx.Input.Query("grant_type")
 	code := c.Ctx.Input.Query("code")
 	verifier := c.Ctx.Input.Query("code_verifier")
@@ -191,6 +193,12 @@ func (c *ApiController) GetOAuthToken() {
 			}
 			if clientSecret == "" {
 				clientSecret = tokenRequest.ClientSecret
+			}
+			if clientAssertion == "" {
+				clientAssertion = tokenRequest.ClientAssertion
+			}
+			if clientAssertionType == "" {
+				clientAssertionType = tokenRequest.ClientAssertionType
 			}
 			if grantType == "" {
 				grantType = tokenRequest.GrantType
@@ -232,6 +240,44 @@ func (c *ApiController) GetOAuthToken() {
 				audience = tokenRequest.Audience
 			}
 		}
+	}
+
+	// Handle private_key_jwt client authentication (RFC 7523)
+	if clientAssertion != "" && clientAssertionType != "" {
+		// Build expected audience (token endpoint URL)
+		expectedAudience := c.Ctx.Request.Host + c.Ctx.Request.URL.Path
+		if c.Ctx.Request.TLS != nil {
+			expectedAudience = "https://" + expectedAudience
+		} else {
+			expectedAudience = "http://" + expectedAudience
+		}
+
+		validatedClientId, err := object.ValidateClientAssertion(clientAssertion, clientAssertionType, expectedAudience)
+		if err != nil {
+			c.Data["json"] = &object.TokenError{
+				Error:            object.InvalidClient,
+				ErrorDescription: "Invalid client authentication",
+			}
+			c.SetTokenErrorHttpStatus()
+			c.ServeJSON()
+			return
+		}
+
+		// RFC 7521 section 4.2: client_id parameter is optional when using client_assertion
+		// If provided, it must match the assertion's subject
+		if clientId == "" {
+			clientId = validatedClientId
+		} else if clientId != validatedClientId {
+			c.Data["json"] = &object.TokenError{
+				Error:            object.InvalidClient,
+				ErrorDescription: "Invalid client authentication",
+			}
+			c.SetTokenErrorHttpStatus()
+			c.ServeJSON()
+			return
+		}
+		// For private_key_jwt, we don't use client_secret
+		clientSecret = ""
 	}
 
 	if deviceCode != "" {

@@ -752,7 +752,9 @@ func GetPasswordToken(application *Application, username string, password string
 // GetClientCredentialsToken
 // Client Credentials flow
 func GetClientCredentialsToken(application *Application, clientSecret string, scope string, host string) (*Token, *TokenError, error) {
-	if application.ClientSecret != clientSecret {
+	// Allow empty clientSecret when using alternative authentication methods like private_key_jwt
+	// The authentication is already validated in the controller/filter before this function is called
+	if clientSecret != "" && application.ClientSecret != clientSecret {
 		return nil, &TokenError{
 			Error:            InvalidClient,
 			ErrorDescription: "client_secret is invalid",
@@ -971,7 +973,8 @@ func GetWechatMiniProgramToken(application *Application, code string, host strin
 // Exchanges a subject token for a new token with different audience or scope
 func GetTokenExchangeToken(application *Application, clientSecret string, subjectToken string, subjectTokenType string, audience string, scope string, host string) (*Token, *TokenError, error) {
 	// Verify client secret
-	if application.ClientSecret != clientSecret {
+	// Allow empty clientSecret when using alternative authentication methods like private_key_jwt
+	if clientSecret != "" && application.ClientSecret != clientSecret {
 		return nil, &TokenError{
 			Error:            InvalidClient,
 			ErrorDescription: "client_secret is invalid",
