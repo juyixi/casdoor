@@ -32,6 +32,7 @@ const (
 	ClientAssertionTypeJWT = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 )
 
+// no dot
 // ValidateClientAssertion validates a JWT client assertion according to RFC 7523
 // Returns the client_id if validation succeeds, error otherwise
 func ValidateClientAssertion(clientAssertion string, clientAssertionType string, expectedAudience string) (string, error) {
