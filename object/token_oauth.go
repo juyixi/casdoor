@@ -302,14 +302,14 @@ func ValidateClientAssertion(clientAssertion string, tokenEndpoint string) (stri
 	// Validate audience strictly - only accept exact match or hostname match
 	validAudience := false
 	tokenHost := extractHostname(tokenEndpoint)
-	
+
 	for _, aud := range verifiedClaims.Audience {
 		// Exact match of the full URL
 		if aud == tokenEndpoint {
 			validAudience = true
 			break
 		}
-		
+
 		// If audience is a full URL, check if hostname matches
 		if strings.Contains(aud, "://") {
 			audienceHost := extractHostname(aud)
@@ -318,7 +318,7 @@ func ValidateClientAssertion(clientAssertion string, tokenEndpoint string) (stri
 				break
 			}
 		}
-		
+
 		// Allow just the hostname as audience
 		if aud == tokenHost {
 			validAudience = true

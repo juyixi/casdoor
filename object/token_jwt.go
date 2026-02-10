@@ -655,7 +655,7 @@ func ParseJwtTokenByApplication(token string, application *Application) (*Claims
 func ParseJwtTokenWithoutValidation(tokenString string) (*jwt.Token, error) {
 	// Use jwt.NewParser with validation disabled
 	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
-	
+
 	// Parse the token without verification
 	token, _, err := parser.ParseUnverified(tokenString, &ClientAssertionClaims{})
 	if err != nil {
@@ -693,7 +693,6 @@ func ParseJwtTokenForClientAssertion(token string, cert *Cert) (*jwt.Token, erro
 
 		return certificate, nil
 	})
-
 	if err != nil {
 		return nil, err
 	}

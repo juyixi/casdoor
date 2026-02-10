@@ -438,12 +438,12 @@ func (c *ApiController) IntrospectToken() {
 	tokenValue := c.Ctx.Input.Query("token")
 	clientAssertion := c.Ctx.Input.Query("client_assertion")
 	clientAssertionType := c.Ctx.Input.Query("client_assertion_type")
-	
+
 	clientId, clientSecret, ok := c.Ctx.Request.BasicAuth()
 	if !ok {
 		clientId = c.Ctx.Input.Query("client_id")
 		clientSecret = c.Ctx.Input.Query("client_secret")
-		
+
 		// Check for private_key_jwt authentication
 		if clientAssertion != "" && clientAssertionType != "" {
 			// Verify client_assertion_type
