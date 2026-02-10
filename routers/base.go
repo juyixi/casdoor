@@ -197,6 +197,58 @@ func parseBearerToken(ctx *context.Context) string {
 	return tokens[1]
 }
 
+// getUsernameByPrivateKeyJwt authenticates a client using JWT assertion (private_key_jwt method)
+// This implements RFC 7523 for OAuth 2.0 client authentication
+func getUsernameByPrivateKeyJwt(ctx *context.Context) (string, error) {
+	// Get client_assertion_type parameter
+	clientAssertionType := ctx.Input.Query("client_assertion_type")
+	if clientAssertionType == "" {
+		// Try to get from POST body
+		clientAssertionType = ctx.Request.FormValue("client_assertion_type")
+	}
+
+	// Get client_assertion parameter
+	clientAssertion := ctx.Input.Query("client_assertion")
+	if clientAssertion == "" {
+		// Try to get from POST body
+		clientAssertion = ctx.Request.FormValue("client_assertion")
+	}
+
+	// If either parameter is missing, this is not a private_key_jwt authentication attempt
+	if clientAssertionType == "" || clientAssertion == "" {
+		return "", nil
+	}
+
+	// Verify client_assertion_type is the correct value per RFC 7523
+	if clientAssertionType != object.ClientAssertionTypeJwtBearer {
+		return "", fmt.Errorf("invalid client_assertion_type: expected %s, got %s", object.ClientAssertionTypeJwtBearer, clientAssertionType)
+	}
+
+	// Build the token endpoint URL for audience validation
+	scheme := "http"
+	if ctx.Request.TLS != nil {
+		scheme = "https"
+	}
+	tokenEndpoint := fmt.Sprintf("%s://%s", scheme, ctx.Request.Host)
+
+	// Validate the JWT assertion
+	clientId, err := object.ValidateClientAssertion(clientAssertion, tokenEndpoint)
+	if err != nil {
+		return "", fmt.Errorf("client assertion validation failed: %w", err)
+	}
+
+	// Return the application user ID (app/<application_name>)
+	application, err := object.GetApplicationByClientId(clientId)
+	if err != nil {
+		return "", err
+	}
+	if application == nil {
+		return "", fmt.Errorf("application not found for client ID: %s", clientId)
+	}
+
+	return fmt.Sprintf("app/%s", application.Name), nil
+}
+
 func getHostname(s string) string {
 	if s == "" {
 		return ""

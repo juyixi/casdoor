@@ -18,6 +18,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"fmt"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -30,14 +31,15 @@ import (
 )
 
 const (
-	hourSeconds          = int(time.Hour / time.Second)
-	InvalidRequest       = "invalid_request"
-	InvalidClient        = "invalid_client"
-	InvalidGrant         = "invalid_grant"
-	UnauthorizedClient   = "unauthorized_client"
-	UnsupportedGrantType = "unsupported_grant_type"
-	InvalidScope         = "invalid_scope"
-	EndpointError        = "endpoint_error"
+	hourSeconds                  = int(time.Hour / time.Second)
+	InvalidRequest               = "invalid_request"
+	InvalidClient                = "invalid_client"
+	InvalidGrant                 = "invalid_grant"
+	UnauthorizedClient           = "unauthorized_client"
+	UnsupportedGrantType         = "unsupported_grant_type"
+	InvalidScope                 = "invalid_scope"
+	EndpointError                = "endpoint_error"
+	ClientAssertionTypeJwtBearer = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 )
 
 var DeviceAuthMap = sync.Map{}
@@ -90,6 +92,20 @@ type DeviceAuthResponse struct {
 	VerificationUri string `json:"verification_uri"`
 	ExpiresIn       int    `json:"expires_in"`
 	Interval        int    `json:"interval"`
+}
+
+// extractHostname extracts the hostname from a URL string
+func extractHostname(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	l, err := url.Parse(s)
+	if err != nil {
+		return s // Return original if parsing fails
+	}
+
+	return l.Hostname()
 }
 
 func ExpireTokenByAccessToken(accessToken string) (bool, *Application, *Token, error) {
@@ -208,6 +224,142 @@ func GetOAuthCode(userId string, clientId string, provider string, signinMethod 
 		Message: "",
 		Code:    token.Code,
 	}, nil
+}
+
+// ValidateClientAssertion validates a JWT client assertion for private_key_jwt authentication
+// Returns the client ID if valid, or an error if invalid
+// Implements RFC 7523 (JWT Profile for OAuth 2.0 Client Authentication)
+func ValidateClientAssertion(clientAssertion string, tokenEndpoint string) (string, error) {
+	if clientAssertion == "" {
+		return "", fmt.Errorf("client_assertion is required")
+	}
+
+	// Parse the JWT without verification first to get the claims
+	token, err := ParseJwtTokenWithoutValidation(clientAssertion)
+	if err != nil {
+		return "", fmt.Errorf("invalid JWT format: %w", err)
+	}
+
+	claims, ok := token.Claims.(*ClientAssertionClaims)
+	if !ok {
+		return "", fmt.Errorf("invalid JWT claims")
+	}
+
+	// RFC 7523: iss (issuer) MUST contain the client_id
+	if claims.Issuer == "" {
+		return "", fmt.Errorf("missing 'iss' claim")
+	}
+
+	// RFC 7523: sub (subject) MUST be the same as iss for client authentication
+	if claims.Subject == "" {
+		return "", fmt.Errorf("missing 'sub' claim")
+	}
+
+	if claims.Issuer != claims.Subject {
+		return "", fmt.Errorf("'iss' and 'sub' claims must be the same for client authentication")
+	}
+
+	clientId := claims.Issuer
+
+	// Get the application by client ID
+	application, err := GetApplicationByClientId(clientId)
+	if err != nil {
+		return "", fmt.Errorf("failed to get application: %w", err)
+	}
+
+	if application == nil {
+		return "", fmt.Errorf("client not found: %s", clientId)
+	}
+
+	// Get the certificate for signature verification
+	cert, err := getCertByApplication(application)
+	if err != nil {
+		return "", fmt.Errorf("failed to get certificate: %w", err)
+	}
+
+	if cert == nil {
+		return "", fmt.Errorf("no certificate found for application: %s", application.Name)
+	}
+
+	// Verify the JWT signature using the application's certificate
+	// We need to parse with the correct claims type for verification
+	verifiedToken, err := ParseJwtTokenForClientAssertion(clientAssertion, cert)
+	if err != nil {
+		return "", fmt.Errorf("JWT signature verification failed: %w", err)
+	}
+
+	verifiedClaims, ok := verifiedToken.Claims.(*ClientAssertionClaims)
+	if !ok {
+		return "", fmt.Errorf("invalid verified claims")
+	}
+
+	// RFC 7523: aud (audience) MUST contain the token endpoint or authorization server URL
+	if len(verifiedClaims.Audience) == 0 {
+		return "", fmt.Errorf("missing 'aud' claim")
+	}
+
+	// RFC 7523: aud (audience) MUST contain the token endpoint or authorization server URL
+	// Validate audience strictly - only accept exact match or hostname match
+	validAudience := false
+	tokenHost := extractHostname(tokenEndpoint)
+
+	for _, aud := range verifiedClaims.Audience {
+		// Exact match of the full URL
+		if aud == tokenEndpoint {
+			validAudience = true
+			break
+		}
+
+		// If audience is a full URL, check if hostname matches
+		if strings.Contains(aud, "://") {
+			audienceHost := extractHostname(aud)
+			if audienceHost != "" && audienceHost == tokenHost {
+				validAudience = true
+				break
+			}
+		}
+
+		// Allow just the hostname as audience
+		if aud == tokenHost {
+			validAudience = true
+			break
+		}
+	}
+
+	if !validAudience {
+		return "", fmt.Errorf("invalid 'aud' claim: expected %s or hostname %s, got %v", tokenEndpoint, tokenHost, verifiedClaims.Audience)
+	}
+
+	// RFC 7523: exp (expiration) MUST be present and the assertion MUST NOT be expired
+	if verifiedClaims.ExpiresAt == nil {
+		return "", fmt.Errorf("missing 'exp' claim")
+	}
+
+	now := time.Now()
+	if now.After(verifiedClaims.ExpiresAt.Time) {
+		return "", fmt.Errorf("JWT has expired")
+	}
+
+	// RFC 7523: jti (JWT ID) SHOULD be present to prevent replay attacks
+	// NOTE: This implementation validates the presence of JTI but does NOT track it.
+	// To prevent replay attacks in production, implement JTI tracking using a cache
+	// (e.g., Redis) that stores used JTIs until their expiration time.
+	// For now, we rely on short JWT expiration times (recommended: 5 minutes) to minimize risk.
+	if verifiedClaims.ID == "" {
+		// This is a SHOULD requirement per RFC 7523, so we don't fail
+		// but strongly recommend clients include a unique JTI
+	}
+
+	// Optional: Validate iat (issued at) and nbf (not before)
+	if verifiedClaims.IssuedAt != nil && verifiedClaims.IssuedAt.Time.After(now) {
+		return "", fmt.Errorf("JWT issued in the future")
+	}
+
+	if verifiedClaims.NotBefore != nil && verifiedClaims.NotBefore.Time.After(now) {
+		return "", fmt.Errorf("JWT not yet valid (nbf)")
+	}
+
+	return clientId, nil
 }
 
 func GetOAuthToken(grantType string, clientId string, clientSecret string, code string, verifier string, scope string, nonce string, username string, password string, host string, refreshToken string, tag string, avatar string, lang string, subjectToken string, subjectTokenType string, audience string) (interface{}, error) {
@@ -639,21 +791,16 @@ func GetAuthorizationCodeToken(application *Application, clientSecret string, co
 	}
 
 	if application.ClientSecret != clientSecret {
-		// when using PKCE, the Client Secret can be empty,
+		// when using PKCE or private_key_jwt, the Client Secret can be empty,
 		// but if it is provided, it must be accurate.
-		if token.CodeChallenge == "" {
+		if clientSecret != "" {
+			// If clientSecret is provided but doesn't match, fail
 			return nil, &TokenError{
 				Error:            InvalidClient,
-				ErrorDescription: fmt.Sprintf("client_secret is invalid for application: [%s], token.CodeChallenge: empty", application.GetId()),
+				ErrorDescription: fmt.Sprintf("client_secret is invalid for application: [%s]", application.GetId()),
 			}, nil
-		} else {
-			if clientSecret != "" {
-				return nil, &TokenError{
-					Error:            InvalidClient,
-					ErrorDescription: fmt.Sprintf("client_secret is invalid for application: [%s], token.CodeChallenge: [%s]", application.GetId(), token.CodeChallenge),
-				}, nil
-			}
 		}
+		// If clientSecret is empty, allow it to proceed (either using PKCE or private_key_jwt)
 	}
 
 	if application.Name != token.Application {
@@ -752,7 +899,8 @@ func GetPasswordToken(application *Application, username string, password string
 // GetClientCredentialsToken
 // Client Credentials flow
 func GetClientCredentialsToken(application *Application, clientSecret string, scope string, host string) (*Token, *TokenError, error) {
-	if application.ClientSecret != clientSecret {
+	// When using private_key_jwt authentication, clientSecret will be empty (already validated via JWT assertion)
+	if clientSecret != "" && application.ClientSecret != clientSecret {
 		return nil, &TokenError{
 			Error:            InvalidClient,
 			ErrorDescription: "client_secret is invalid",

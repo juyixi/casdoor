@@ -314,3 +314,22 @@ func getInvalidSmsReceivers(smsForm SmsForm) []string {
 	}
 	return invalidReceivers
 }
+
+// buildTokenEndpointURL constructs the token endpoint URL from the ApiController context
+// Used for private_key_jwt audience validation
+func (c *ApiController) buildTokenEndpointURL() string {
+	scheme := "http"
+	if c.Ctx.Request.TLS != nil {
+		scheme = "https"
+	}
+	return fmt.Sprintf("%s://%s", scheme, c.Ctx.Request.Host)
+}
+
+// validateClientAssertionType validates the client_assertion_type parameter
+// Returns nil if valid, error otherwise
+func validateClientAssertionTypeForController(clientAssertionType string) error {
+	if clientAssertionType != object.ClientAssertionTypeJwtBearer {
+		return fmt.Errorf("invalid client_assertion_type: expected %s", object.ClientAssertionTypeJwtBearer)
+	}
+	return nil
+}
