@@ -328,9 +328,8 @@ func (c *ApiController) buildTokenEndpointURL() string {
 // validateClientAssertionType validates the client_assertion_type parameter
 // Returns nil if valid, error otherwise
 func validateClientAssertionTypeForController(clientAssertionType string) error {
-	expectedType := "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
-	if clientAssertionType != expectedType {
-		return fmt.Errorf("invalid client_assertion_type: expected %s", expectedType)
+	if clientAssertionType != object.ClientAssertionTypeJwtBearer {
+		return fmt.Errorf("invalid client_assertion_type: expected %s", object.ClientAssertionTypeJwtBearer)
 	}
 	return nil
 }

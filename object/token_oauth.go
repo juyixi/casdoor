@@ -31,14 +31,15 @@ import (
 )
 
 const (
-	hourSeconds          = int(time.Hour / time.Second)
-	InvalidRequest       = "invalid_request"
-	InvalidClient        = "invalid_client"
-	InvalidGrant         = "invalid_grant"
-	UnauthorizedClient   = "unauthorized_client"
-	UnsupportedGrantType = "unsupported_grant_type"
-	InvalidScope         = "invalid_scope"
-	EndpointError        = "endpoint_error"
+	hourSeconds                  = int(time.Hour / time.Second)
+	InvalidRequest               = "invalid_request"
+	InvalidClient                = "invalid_client"
+	InvalidGrant                 = "invalid_grant"
+	UnauthorizedClient           = "unauthorized_client"
+	UnsupportedGrantType         = "unsupported_grant_type"
+	InvalidScope                 = "invalid_scope"
+	EndpointError                = "endpoint_error"
+	ClientAssertionTypeJwtBearer = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 )
 
 var DeviceAuthMap = sync.Map{}
