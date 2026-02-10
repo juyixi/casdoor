@@ -162,6 +162,8 @@ func (c *ApiController) DeleteToken() {
 func (c *ApiController) GetOAuthToken() {
 	clientId := c.Ctx.Input.Query("client_id")
 	clientSecret := c.Ctx.Input.Query("client_secret")
+	clientAssertion := c.Ctx.Input.Query("client_assertion")
+	clientAssertionType := c.Ctx.Input.Query("client_assertion_type")
 	grantType := c.Ctx.Input.Query("grant_type")
 	code := c.Ctx.Input.Query("code")
 	verifier := c.Ctx.Input.Query("code_verifier")
@@ -177,7 +179,7 @@ func (c *ApiController) GetOAuthToken() {
 	subjectTokenType := c.Ctx.Input.Query("subject_token_type")
 	audience := c.Ctx.Input.Query("audience")
 
-	if clientId == "" && clientSecret == "" {
+	if clientId == "" && clientSecret == "" && clientAssertion == "" {
 		clientId, clientSecret, _ = c.Ctx.Request.BasicAuth()
 	}
 
@@ -191,6 +193,12 @@ func (c *ApiController) GetOAuthToken() {
 			}
 			if clientSecret == "" {
 				clientSecret = tokenRequest.ClientSecret
+			}
+			if clientAssertion == "" {
+				clientAssertion = tokenRequest.ClientAssertion
+			}
+			if clientAssertionType == "" {
+				clientAssertionType = tokenRequest.ClientAssertionType
 			}
 			if grantType == "" {
 				grantType = tokenRequest.GrantType
@@ -275,6 +283,46 @@ func (c *ApiController) GetOAuthToken() {
 	}
 
 	host := c.Ctx.Request.Host
+
+	// Handle private_key_jwt client authentication (RFC 7523)
+	if clientAssertion != "" && clientAssertionType != "" {
+		// Verify client_assertion_type
+		expectedType := "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+		if clientAssertionType != expectedType {
+			c.Data["json"] = &object.TokenError{
+				Error:            object.InvalidClient,
+				ErrorDescription: fmt.Sprintf("invalid client_assertion_type: expected %s", expectedType),
+			}
+			c.SetTokenErrorHttpStatus()
+			c.ServeJSON()
+			return
+		}
+
+		// Build the token endpoint URL for audience validation
+		scheme := "http"
+		if c.Ctx.Request.TLS != nil {
+			scheme = "https"
+		}
+		tokenEndpoint := fmt.Sprintf("%s://%s", scheme, host)
+
+		// Validate the JWT assertion
+		validatedClientId, err := object.ValidateClientAssertion(clientAssertion, tokenEndpoint)
+		if err != nil {
+			c.Data["json"] = &object.TokenError{
+				Error:            object.InvalidClient,
+				ErrorDescription: fmt.Sprintf("client assertion validation failed: %s", err.Error()),
+			}
+			c.SetTokenErrorHttpStatus()
+			c.ServeJSON()
+			return
+		}
+
+		// Override clientId with the validated one from the assertion
+		// Set clientSecret to empty since we're using JWT assertion instead
+		clientId = validatedClientId
+		clientSecret = ""
+	}
+
 	token, err := object.GetOAuthToken(grantType, clientId, clientSecret, code, verifier, scope, nonce, username, password, host, refreshToken, tag, avatar, c.GetAcceptLanguage(), subjectToken, subjectTokenType, audience)
 	if err != nil {
 		c.ResponseError(err.Error())
@@ -305,6 +353,8 @@ func (c *ApiController) RefreshToken() {
 	scope := c.Ctx.Input.Query("scope")
 	clientId := c.Ctx.Input.Query("client_id")
 	clientSecret := c.Ctx.Input.Query("client_secret")
+	clientAssertion := c.Ctx.Input.Query("client_assertion")
+	clientAssertionType := c.Ctx.Input.Query("client_assertion_type")
 	host := c.Ctx.Request.Host
 
 	if clientId == "" {
@@ -313,10 +363,51 @@ func (c *ApiController) RefreshToken() {
 		if err := json.Unmarshal(c.Ctx.Input.RequestBody, &tokenRequest); err == nil {
 			clientId = tokenRequest.ClientId
 			clientSecret = tokenRequest.ClientSecret
+			clientAssertion = tokenRequest.ClientAssertion
+			clientAssertionType = tokenRequest.ClientAssertionType
 			grantType = tokenRequest.GrantType
 			scope = tokenRequest.Scope
 			refreshToken = tokenRequest.RefreshToken
 		}
+	}
+
+	// Handle private_key_jwt client authentication (RFC 7523)
+	if clientAssertion != "" && clientAssertionType != "" {
+		// Verify client_assertion_type
+		expectedType := "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+		if clientAssertionType != expectedType {
+			c.Data["json"] = &object.TokenError{
+				Error:            object.InvalidClient,
+				ErrorDescription: fmt.Sprintf("invalid client_assertion_type: expected %s", expectedType),
+			}
+			c.SetTokenErrorHttpStatus()
+			c.ServeJSON()
+			return
+		}
+
+		// Build the token endpoint URL for audience validation
+		scheme := "http"
+		if c.Ctx.Request.TLS != nil {
+			scheme = "https"
+		}
+		tokenEndpoint := fmt.Sprintf("%s://%s", scheme, host)
+
+		// Validate the JWT assertion
+		validatedClientId, err := object.ValidateClientAssertion(clientAssertion, tokenEndpoint)
+		if err != nil {
+			c.Data["json"] = &object.TokenError{
+				Error:            object.InvalidClient,
+				ErrorDescription: fmt.Sprintf("client assertion validation failed: %s", err.Error()),
+			}
+			c.SetTokenErrorHttpStatus()
+			c.ServeJSON()
+			return
+		}
+
+		// Override clientId with the validated one from the assertion
+		// Set clientSecret to empty since we're using JWT assertion instead
+		clientId = validatedClientId
+		clientSecret = ""
 	}
 
 	refreshToken2, err := object.RefreshToken(grantType, refreshToken, scope, clientId, clientSecret, host)
@@ -355,11 +446,40 @@ func (c *ApiController) ResponseTokenError(errorMsg string) {
 // @router /login/oauth/introspect [post]
 func (c *ApiController) IntrospectToken() {
 	tokenValue := c.Ctx.Input.Query("token")
+	clientAssertion := c.Ctx.Input.Query("client_assertion")
+	clientAssertionType := c.Ctx.Input.Query("client_assertion_type")
+	
 	clientId, clientSecret, ok := c.Ctx.Request.BasicAuth()
 	if !ok {
 		clientId = c.Ctx.Input.Query("client_id")
 		clientSecret = c.Ctx.Input.Query("client_secret")
-		if clientId == "" || clientSecret == "" {
+		
+		// Check for private_key_jwt authentication
+		if clientAssertion != "" && clientAssertionType != "" {
+			// Verify client_assertion_type
+			expectedType := "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+			if clientAssertionType != expectedType {
+				c.ResponseTokenError(object.InvalidClient)
+				return
+			}
+
+			// Build the token endpoint URL for audience validation
+			scheme := "http"
+			if c.Ctx.Request.TLS != nil {
+				scheme = "https"
+			}
+			tokenEndpoint := fmt.Sprintf("%s://%s", scheme, c.Ctx.Request.Host)
+
+			// Validate the JWT assertion
+			validatedClientId, err := object.ValidateClientAssertion(clientAssertion, tokenEndpoint)
+			if err != nil {
+				c.ResponseTokenError(object.InvalidClient)
+				return
+			}
+
+			clientId = validatedClientId
+			clientSecret = "" // Not needed for JWT assertion
+		} else if clientId == "" || clientSecret == "" {
 			c.ResponseTokenError(object.InvalidRequest)
 			return
 		}
@@ -371,7 +491,13 @@ func (c *ApiController) IntrospectToken() {
 		return
 	}
 
-	if application == nil || application.ClientSecret != clientSecret {
+	if application == nil {
+		c.ResponseTokenError(c.T("token:Invalid application or wrong clientSecret"))
+		return
+	}
+
+	// Verify client secret only if not using JWT assertion
+	if clientSecret != "" && application.ClientSecret != clientSecret {
 		c.ResponseTokenError(c.T("token:Invalid application or wrong clientSecret"))
 		return
 	}

@@ -39,6 +39,11 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
+// ClientAssertionClaims represents the JWT claims for private_key_jwt client authentication (RFC 7523)
+type ClientAssertionClaims struct {
+	jwt.RegisteredClaims
+}
+
 type UserShort struct {
 	Owner string `xorm:"varchar(100) notnull pk" json:"owner"`
 	Name  string `xorm:"varchar(100) notnull pk" json:"name"`
@@ -643,4 +648,59 @@ func ParseJwtTokenByApplication(token string, application *Application) (*Claims
 	}
 
 	return ParseJwtToken(token, cert)
+}
+
+// ParseJwtTokenWithoutValidation parses a JWT token without validating the signature
+// This is used to extract claims before verification, such as for private_key_jwt authentication
+func ParseJwtTokenWithoutValidation(tokenString string) (*jwt.Token, error) {
+	// Use jwt.NewParser with validation disabled
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+	
+	// Parse the token without verification
+	token, _, err := parser.ParseUnverified(tokenString, &ClientAssertionClaims{})
+	if err != nil {
+		return nil, err
+	}
+
+	return token, nil
+}
+
+// ParseJwtTokenForClientAssertion parses and validates a JWT token for client assertion (private_key_jwt)
+func ParseJwtTokenForClientAssertion(token string, cert *Cert) (*jwt.Token, error) {
+	t, err := jwt.ParseWithClaims(token, &ClientAssertionClaims{}, func(token *jwt.Token) (interface{}, error) {
+		var (
+			certificate interface{}
+			err         error
+		)
+
+		if cert.Certificate == "" {
+			return nil, fmt.Errorf("the certificate field should not be empty for the cert: %v", cert)
+		}
+
+		if _, ok := token.Method.(*jwt.SigningMethodRSA); ok {
+			// RSA certificate
+			certificate, err = jwt.ParseRSAPublicKeyFromPEM([]byte(cert.Certificate))
+		} else if _, ok := token.Method.(*jwt.SigningMethodECDSA); ok {
+			// ES certificate
+			certificate, err = jwt.ParseECPublicKeyFromPEM([]byte(cert.Certificate))
+		} else {
+			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		return certificate, nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	if !t.Valid {
+		return nil, fmt.Errorf("token is invalid")
+	}
+
+	return t, nil
 }

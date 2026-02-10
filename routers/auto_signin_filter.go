@@ -97,8 +97,20 @@ func AutoSigninFilter(ctx *context.Context) {
 		setSessionUser(ctx, userId)
 	}
 
+	// OAuth 2.0 private_key_jwt client authentication (RFC 7523)
+	// Check for client_assertion and client_assertion_type parameters
+	userId, err := getUsernameByPrivateKeyJwt(ctx)
+	if err != nil {
+		responseError(ctx, err.Error())
+		return
+	}
+	if userId != "" {
+		setSessionUser(ctx, userId)
+		return
+	}
+
 	// "/page?clientId=123&clientSecret=456"
-	userId, err := getUsernameByClientIdSecret(ctx)
+	userId, err = getUsernameByClientIdSecret(ctx)
 	if err != nil {
 		responseError(ctx, err.Error())
 		return
