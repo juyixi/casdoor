@@ -780,21 +780,16 @@ func GetAuthorizationCodeToken(application *Application, clientSecret string, co
 	}
 
 	if application.ClientSecret != clientSecret {
-		// when using PKCE, the Client Secret can be empty,
+		// when using PKCE or private_key_jwt, the Client Secret can be empty,
 		// but if it is provided, it must be accurate.
-		if token.CodeChallenge == "" {
+		if clientSecret != "" {
+			// If clientSecret is provided but doesn't match, fail
 			return nil, &TokenError{
 				Error:            InvalidClient,
-				ErrorDescription: fmt.Sprintf("client_secret is invalid for application: [%s], token.CodeChallenge: empty", application.GetId()),
+				ErrorDescription: fmt.Sprintf("client_secret is invalid for application: [%s]", application.GetId()),
 			}, nil
-		} else {
-			if clientSecret != "" {
-				return nil, &TokenError{
-					Error:            InvalidClient,
-					ErrorDescription: fmt.Sprintf("client_secret is invalid for application: [%s], token.CodeChallenge: [%s]", application.GetId(), token.CodeChallenge),
-				}, nil
-			}
 		}
+		// If clientSecret is empty, allow it to proceed (either using PKCE or private_key_jwt)
 	}
 
 	if application.Name != token.Application {
@@ -893,7 +888,8 @@ func GetPasswordToken(application *Application, username string, password string
 // GetClientCredentialsToken
 // Client Credentials flow
 func GetClientCredentialsToken(application *Application, clientSecret string, scope string, host string) (*Token, *TokenError, error) {
-	if application.ClientSecret != clientSecret {
+	// When using private_key_jwt authentication, clientSecret will be empty (already validated via JWT assertion)
+	if clientSecret != "" && application.ClientSecret != clientSecret {
 		return nil, &TokenError{
 			Error:            InvalidClient,
 			ErrorDescription: "client_secret is invalid",
